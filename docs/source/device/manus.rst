@@ -57,11 +57,13 @@ installing rules from a container has no effect.
 If you're using the Isaac ROS dev container (``isaac_ros run_dev``), it
 bind-mounts ``/dev/bus/usb`` from the host, so once the host has the rules
 applied the container will see the dongle with the right permissions.
+This environment is managed by Isaac ROS, independently of this repository's
+editor setup.
 
 Step 2: build the SDK and plugin
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Run this **inside the build environment** (devcontainer or Isaac ROS container):
+Run this **inside the build environment** (for example, an Isaac ROS container):
 
 .. code-block:: bash
 

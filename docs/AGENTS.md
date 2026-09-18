@@ -83,3 +83,9 @@ the table has no description column, so a capability claim enters `modes` only i
 device page documents it, links belong in the Details panel, and the sentence itself is
 dropped. The build keeps `company` that narrow by rejecting every field but `name`, `logo`,
 and `logo_dark`.
+
+## Tooling removal scope
+
+When removing repository-owned editor tooling, distinguish it from independently
+managed build environments. Preserve Isaac ROS container instructions when removing
+the repository's VS Code container setup.
