@@ -385,7 +385,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v6
       with:
-        fetch-depth: 1
+        # Full history: the version is the number of commits since VERSION
+        # last changed, and on a tag build CMake compares that against the
+        # tag. A shallow clone counts 0 and every release tag mismatches.
+        fetch-depth: 0
         persist-credentials: false
 
     - name: Install uv
@@ -1117,7 +1120,7 @@ jobs:
     if: >-
       needs.wheel-gate.result == 'success'
       && (github.repository_id == '1092046207'
-        || github.repository_id == '1263117168')
+      || github.repository_id == '1263117168')
       && startsWith(github.ref, 'refs/tags/v')
 
     steps:
@@ -1212,7 +1215,7 @@ jobs:
       vars.RUN_SELF_HOSTED == 'true'
       && needs.wheel-gate.result == 'success'
       && (github.event_name != 'pull_request'
-        || github.event.pull_request.head.repo.full_name == github.repository)
+      || github.event.pull_request.head.repo.full_name == github.repository)
 
     steps:
     - name: Set up Python
