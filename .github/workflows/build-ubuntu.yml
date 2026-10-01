@@ -46,6 +46,14 @@ jobs:
       with:
         fetch-depth: 0 # Full history for accurate git describe
 
+    # Every artifact a release advertises is stamped with this, so it has to be
+    # a property of the commit and not of when a job happened to run. A
+    # `py3-none-any` wheel is built by every matrix entry, and with wall-clock
+    # stamps the six copies differ in their embedded SBOM alone -- same filename,
+    # different bytes, which the release manifest refuses to publish.
+    - name: Pin the build clock to the commit
+      run: echo "SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)" >> "$GITHUB_ENV"
+
     # One build directory per job; later steps (ctest, coverage, test packaging,
     # install) all refer to it through BUILD_DIR.
     - name: Resolve build directory
