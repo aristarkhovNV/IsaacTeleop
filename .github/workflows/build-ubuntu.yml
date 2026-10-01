@@ -1117,8 +1117,14 @@ jobs:
     # Pinned by repository id so a fork does not attach releases to itself by
     # accident. 1092046207 is NVIDIA/IsaacCapture; 1263117168 is the fork the
     # release process is rehearsed on.
+    # `!cancelled()` because a skip propagates through the whole dependency
+    # chain, not just one level: a test job that does not run -- no self-hosted
+    # runner, an empty arch matrix -- skips `wheel-gate`'s dependents even though
+    # `wheel-gate` itself succeeded through `always()`. The result check below is
+    # what gates this job; without a status function it never gets to run.
     if: >-
-      needs.wheel-gate.result == 'success'
+      !cancelled()
+      && needs.wheel-gate.result == 'success'
       && (github.repository_id == '1092046207'
       || github.repository_id == '1263117168')
       && startsWith(github.ref, 'refs/tags/v')
@@ -1211,8 +1217,11 @@ jobs:
     # is the base repo even for fork PRs, so compare the PR head repo instead.
     # Uploads to internal Artifactory from a self-hosted runner; see
     # RUN_SELF_HOSTED above.
+    # See `publish-sbom-evidence`: a skip anywhere upstream of `wheel-gate`
+    # reaches here too, and the result check is what should decide.
     if: >-
-      vars.RUN_SELF_HOSTED == 'true'
+      !cancelled()
+      && vars.RUN_SELF_HOSTED == 'true'
       && needs.wheel-gate.result == 'success'
       && (github.event_name != 'pull_request'
       || github.event.pull_request.head.repo.full_name == github.repository)
