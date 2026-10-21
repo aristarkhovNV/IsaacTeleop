@@ -10,6 +10,7 @@ on:
 
 jobs:
   sync:
+    if: false  # tag rehearsal in a fork: do not create release branches
     name: Sync ${{ matrix.branch }}
     runs-on: ubuntu-latest
     concurrency:
