@@ -861,6 +861,94 @@ def test_merge_manifests_refuses_malformed_sidecars(tmp_path):
         build_module.merge_manifests([_manifest_of(tmp_path, [record])])
 
 
+ARCHIVE = "isaaccapture-sbom-v1.0.0.zip"
+
+
+def _pack_cli(manifest, evidence, archive):
+    return cli.main(
+        [
+            "pack",
+            "--manifest",
+            str(manifest),
+            "--evidence-dir",
+            str(evidence),
+            "--output",
+            str(archive),
+        ]
+    )
+
+
+def test_a_packed_release_unpacks_to_a_set_that_verifies(built, tmp_path):
+    """The release job's recipe: merge, pack, unpack, check-set."""
+    staging = tmp_path / "staging"
+    assert _merge_cli(_two_builds_of_one_wheel(built, tmp_path), staging) == 0
+    manifest = staging / "isaaccapture-sbom-manifest.json"
+    archive = tmp_path / ARCHIVE
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    shutil.copy(built["wheel"], wheels)
+
+    assert _pack_cli(manifest, staging, archive) == 0
+    with zipfile.ZipFile(archive) as packed:
+        packed.extractall(tmp_path / "unpacked")
+    root = tmp_path / "unpacked" / archive.stem
+    assert [item.name for item in root.parent.iterdir()] == [root.name]
+    assert validate_module.check_set(root / manifest.name, wheels, root) == []
+
+
+def test_packing_twice_writes_the_same_bytes(built, tmp_path, monkeypatch):
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1700000000")
+    archives = [tmp_path / name / ARCHIVE for name in ("a", "b")]
+    for archive in archives:
+        archive.parent.mkdir()
+        assert _pack_cli(built["manifest_path"], built["out_dir"], archive) == 0
+
+    assert archives[0].read_bytes() == archives[1].read_bytes()
+    with zipfile.ZipFile(archives[0]) as packed:
+        assert {item.date_time for item in packed.infolist()} == {
+            (2023, 11, 14, 22, 13, 20)
+        }
+
+
+def test_pack_refuses_evidence_its_manifest_does_not_match(built, tmp_path):
+    built["spdx_path"].write_text("{}", encoding="utf-8")
+    archive = tmp_path / ARCHIVE
+
+    with pytest.raises(build_module.BuildError, match="does not match"):
+        build_module.pack_evidence(built["manifest_path"], built["out_dir"], archive)
+    assert not archive.exists()
+
+
+def test_a_pack_that_fails_midway_leaves_nothing(built, tmp_path, monkeypatch):
+    archive = tmp_path / ARCHIVE
+
+    def unreadable(self):
+        raise OSError(f"{self}: read failed")
+
+    monkeypatch.setattr(type(archive), "read_bytes", unreadable)
+    with pytest.raises(OSError, match="read failed"):
+        build_module.pack_evidence(built["manifest_path"], built["out_dir"], archive)
+    assert not archive.exists()
+    assert list(tmp_path.glob(".*.partial")) == []
+
+
+def test_pack_refuses_two_files_of_one_name(built, tmp_path):
+    manifest = tmp_path / "isaaccapture-sbom-manifest.json"
+    record = json.loads(json.dumps(built["manifest"]["wheels"][0]))
+    record["sidecars"]["license_report_md"]["filename"] = manifest.name
+    manifest.write_text(json.dumps({"wheels": [record]}), encoding="utf-8")
+
+    with pytest.raises(build_module.BuildError, match=f"share a name: {manifest.name}"):
+        build_module.pack_evidence(manifest, tmp_path, tmp_path / "e.zip")
+
+
+def test_pack_writes_only_a_zip(tmp_path):
+    with pytest.raises(build_module.BuildError, match=r"must be a \.zip"):
+        build_module.pack_evidence(
+            tmp_path / "manifest.json", tmp_path, tmp_path / "evidence.tar"
+        )
+
+
 def test_reuse_toml_declares_the_terms_of_an_untagged_vendored_file(workspace):
     """A checked-in header that names no identifier, as Chromium's key table
     does, under `src/vendor` so the extension that includes it ships it."""

@@ -65,6 +65,8 @@ checks the wheel against the digest bound at publication and the sidecars beside
 `merge-manifests` refuses a wheel name whose builds produced different bytes, SBOMs or
 license reports. Only build evidence may differ; the first manifest's in path order (in
 CI, artifact-name order) is bound, and `--evidence-out` copies exactly the bound files.
+`pack` zips a manifest and the files it binds, reproducibly under `SOURCE_DATE_EPOCH`, into
+the one archive a release attaches; GitHub renames release assets, and names inside a zip survive.
 Any command reading a manifest refuses one that lists no wheel. CI validates each
 published document with `spdx-tools` before release.
 

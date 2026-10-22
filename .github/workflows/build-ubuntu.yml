@@ -1164,6 +1164,8 @@ jobs:
     permissions:
       contents: write
     timeout-minutes: 20
+    env:
+      ARCHIVE: isaaccapture-sbom-${{ github.ref_name }}
 
     # `!cancelled()` for the reason spelled out on `publish-wheel`: a skip
     # anywhere upstream of `wheel-gate` reaches here too, and the result check
@@ -1197,7 +1199,12 @@ jobs:
         pattern: isaaccapture-sbom-*
         path: sbom-sidecars
 
-    - name: Assemble and verify the release evidence set
+    # The merged manifest and the archive are stamped with this, so re-running
+    # this job publishes the same bytes.
+    - name: Pin the build clock to the commit
+      run: echo "SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)" >> "$GITHUB_ENV"
+
+    - name: Pack and verify the release evidence archive
       run: |
         set -euo pipefail
 
@@ -1206,18 +1213,24 @@ jobs:
         # merged manifest binds.
         uv run --project scripts/sbom --python 3.12 \
           isaaccapture-sbom merge-manifests \
-          --output release-evidence/isaaccapture-sbom-manifest.json \
-          --evidence-out release-evidence \
+          --output staging/isaaccapture-sbom-manifest.json \
+          --evidence-out staging \
           sbom-sidecars/*/manifest.json
 
-        # Rehearses the published verification instructions against the exact
-        # bytes a consumer will download, and re-checks every advertised digest.
+        uv run --project scripts/sbom --python 3.12 \
+          isaaccapture-sbom pack \
+          --manifest staging/isaaccapture-sbom-manifest.json \
+          --evidence-dir staging --output "${ARCHIVE}.zip"
+
+        # Rehearses the published verification instructions on what a consumer
+        # unpacks, and re-checks every advertised digest.
+        unzip -q "${ARCHIVE}.zip" -d unpacked
         uv run --project scripts/sbom --python 3.12 \
           isaaccapture-sbom check-set \
-          --manifest release-evidence/isaaccapture-sbom-manifest.json \
-          --wheel-dir wheels --evidence-dir release-evidence
+          --manifest "unpacked/${ARCHIVE}/isaaccapture-sbom-manifest.json" \
+          --wheel-dir wheels --evidence-dir "unpacked/${ARCHIVE}"
 
-        ls -la release-evidence
+        unzip -l "${ARCHIVE}.zip"
 
     - name: Attach evidence to the release
       env:
@@ -1239,11 +1252,11 @@ jobs:
           sleep 20
         done
 
-        # --clobber makes a retry after a partial upload idempotent. Draft state
-        # and release notes are left exactly as they were.
-        gh release upload "${TAG}" release-evidence/* --clobber
+        # --clobber makes a retry idempotent. Draft state and release notes are
+        # left exactly as they were.
+        gh release upload "${TAG}" "${ARCHIVE}.zip" --clobber
 
-        echo "Attached $(ls release-evidence | wc -l) evidence file(s) to ${TAG}"
+        echo "Attached ${ARCHIVE}.zip to ${TAG}"
 
   publish-wheel:  # to internal Artifactory
     runs-on: [self-hosted, linux]
