@@ -10,8 +10,6 @@ import json
 import os
 import shutil
 import tempfile
-import zipfile
-from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
@@ -513,45 +511,6 @@ def build(
     }
 
 
-def pack_evidence(manifest_path: Path, evidence_dir: Path, output: Path) -> None:
-    """Zip a manifest and every sidecar it binds, under one directory named
-    for the archive, so a release attaches one file a consumer unpacks and
-    checks with check-set."""
-    if output.suffix != ".zip":
-        raise BuildError(f"{output}: the evidence archive must be a .zip")
-    records = [
-        validate_module.checked_record(item)
-        for item in validate_module.manifest_records(manifest_path)
-    ]
-    files = [(manifest_path.name, manifest_path)] + [
-        (name, evidence_dir / name) for name in validate_module.bound_names(records)
-    ]
-    shared = sorted(
-        name for name, seen in Counter(name for name, _ in files).items() if seen > 1
-    )
-    if shared:
-        raise BuildError(
-            f"{manifest_path}: its files share a name: {', '.join(shared)}"
-        )
-    _require_bound([(evidence_dir, record) for record in records])
-    # Every member stamped with the release's clock, in a fixed order: under
-    # SOURCE_DATE_EPOCH a rerun writes the same bytes. Zip cannot record a
-    # date before 1980.
-    stamp = max(stamped_now().timetuple()[:6], (1980, 1, 1, 0, 0, 0))
-    partial = output.with_name(f".{output.name}.partial")
-    try:
-        with zipfile.ZipFile(partial, "w") as archive:
-            for name, path in sorted(files):
-                member = zipfile.ZipInfo(f"{output.stem}/{name}", date_time=stamp)
-                member.create_system = 3  # Unix, or the bytes depend on the host
-                member.external_attr = 0o644 << 16
-                member.compress_type = zipfile.ZIP_DEFLATED
-                archive.writestr(member, path.read_bytes())
-        partial.replace(output)
-    finally:
-        partial.unlink(missing_ok=True)
-
-
 def merge_manifests(paths: list[Path], evidence_out: Path | None = None) -> dict:
     """Fold per-variant manifests into the one a release advertises.
 
@@ -572,7 +531,13 @@ def merge_manifests(paths: list[Path], evidence_out: Path | None = None) -> dict
     beside = {id(item): parent for parent, item in found}
     bound = [(beside[id(record)], record) for record in merged["wheels"]]
     # Checked before anything is written, so a refused set copies nothing.
-    _require_bound(bound)
+    failures = [
+        f"{record['filename']}: {failure}"
+        for parent, record in bound
+        for failure in validate_module.sidecar_failures(parent, record)
+    ]
+    if failures:
+        raise BuildError("; ".join(failures))
     evidence_out.mkdir(parents=True, exist_ok=True)
     for parent, record in bound:
         # Already in place, and verified above; copying onto itself would raise.
@@ -581,17 +546,6 @@ def merge_manifests(paths: list[Path], evidence_out: Path | None = None) -> dict
         for name in validate_module.bound_names([record]):
             shutil.copyfile(parent / name, evidence_out / name)
     return merged
-
-
-def _require_bound(pairs: list[tuple[Path, dict]]) -> None:
-    """Each record's sidecars, beside it as bound, or BuildError naming each miss."""
-    failures = [
-        f"{record['filename']}: {failure}"
-        for parent, record in pairs
-        for failure in validate_module.sidecar_failures(parent, record)
-    ]
-    if failures:
-        raise BuildError("; ".join(failures))
 
 
 def merge_records(wheels: list[dict]) -> dict:

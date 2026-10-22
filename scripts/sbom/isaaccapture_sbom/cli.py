@@ -126,14 +126,6 @@ def _cmd_merge_manifests(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_pack(args: argparse.Namespace) -> int:
-    build_module.pack_evidence(
-        Path(args.manifest), Path(args.evidence_dir), Path(args.output)
-    )
-    print(f"packed the evidence {args.manifest} binds -> {args.output}")
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog=TOOL_NAME, description=__doc__)
     parser.add_argument(
@@ -213,22 +205,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     merge.add_argument("manifest", nargs="+", help="per-variant manifests")
     merge.set_defaults(handler=_cmd_merge_manifests)
-
-    pack = subparsers.add_parser(
-        "pack", help="zip a merged manifest and the sidecars it binds for a release"
-    )
-    pack.add_argument(
-        "--manifest", required=True, help="merged manifest of the release"
-    )
-    pack.add_argument(
-        "--evidence-dir", required=True, help="where the bound sidecars live"
-    )
-    pack.add_argument(
-        "--output",
-        required=True,
-        help="archive to write; its name, less .zip, is the directory inside",
-    )
-    pack.set_defaults(handler=_cmd_pack)
 
     args = parser.parse_args(argv)
     try:

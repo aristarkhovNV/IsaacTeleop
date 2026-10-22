@@ -1213,14 +1213,18 @@ jobs:
         # merged manifest binds.
         uv run --project scripts/sbom --python 3.12 \
           isaaccapture-sbom merge-manifests \
-          --output staging/isaaccapture-sbom-manifest.json \
-          --evidence-out staging \
+          --output "${ARCHIVE}/isaaccapture-sbom-manifest.json" \
+          --evidence-out "${ARCHIVE}" \
           sbom-sidecars/*/manifest.json
 
-        uv run --project scripts/sbom --python 3.12 \
-          isaaccapture-sbom pack \
-          --manifest staging/isaaccapture-sbom-manifest.json \
-          --evidence-dir staging --output "${ARCHIVE}.zip"
+        # One zip, not loose assets: GitHub renames release assets (`!` becomes
+        # `.`), and names inside a zip are kept. Fixed times, modes and order,
+        # and no owner or extra time fields (-X), so a rerun zips the same
+        # bytes; zip stores local time, hence TZ.
+        touch -d "@${SOURCE_DATE_EPOCH}" "${ARCHIVE}"/*
+        chmod 644 "${ARCHIVE}"/*
+        printf '%s\n' "${ARCHIVE}"/* | LC_ALL=C sort \
+          | TZ=UTC zip -X -q "${ARCHIVE}.zip" -@
 
         # Rehearses the published verification instructions on what a consumer
         # unpacks, and re-checks every advertised digest.
