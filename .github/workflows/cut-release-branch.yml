@@ -1,0 +1,93 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# When a push to main bumps VERSION (e.g. 1.7.x -> 1.8.x), point release/1.7.x at
+# the bump commit's first parent: the last main commit of the old version. An
+# existing release branch is fast-forwarded; the run fails if that is impossible.
+# No concurrency group: it would cancel a pending run and drop its bump, while the
+# non-force push already makes racing runs safe.
+
+name: Cut Release Branch
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ VERSION ]
+
+permissions:
+  contents: read
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Checkout (full history)
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        # A RELEASE_SYNC_TOKEN push triggers build-ubuntu.yml on the release
+        # branch; the GITHUB_TOKEN fallback (forks) pushes without triggering it.
+        token: ${{ secrets.RELEASE_SYNC_TOKEN || github.token }}
+
+    - name: Create or fast-forward release branches
+      env:
+        BEFORE: ${{ github.event.before }}
+        AFTER: ${{ github.sha }}
+      run: |
+        set -euo pipefail
+
+        read_version() {
+          git show "$1:VERSION" 2>/dev/null | tr -d '[:space:]'
+        }
+
+        # Walk main's first-parent chain over the pushed range so a bump that is
+        # not the pushed tip is still found. A force push can leave BEFORE unknown.
+        if [[ "${BEFORE}" =~ ^0+$ ]] || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+          commits="${AFTER}"
+        else
+          commits="$(git rev-list --reverse --first-parent "${BEFORE}..${AFTER}")"
+        fi
+
+        cut=0
+        for commit in ${commits}; do
+          parent="$(git rev-parse --verify --quiet "${commit}^1" || true)"
+          [[ -n "${parent}" ]] || continue
+          old="$(read_version "${parent}")"
+          new="$(read_version "${commit}")"
+          [[ -n "${old}" && "${old}" != "${new}" ]] || continue
+
+          if [[ ! "${old}" =~ ^[0-9]+\.[0-9]+\.x$ || ! "${new}" =~ ^[0-9]+\.[0-9]+\.x$ ]]; then
+            echo "::error::${commit} changes VERSION '${old}' -> '${new}'; both must be MAJOR.MINOR.x."
+            exit 1
+          fi
+          if [[ "$(printf '%s\n%s\n' "${old%.x}" "${new%.x}" | sort -V | tail -1)" != "${new%.x}" ]]; then
+            echo "::notice::${commit} lowers VERSION ${old} -> ${new}; not cutting a release branch."
+            continue
+          fi
+
+          branch="release/${old}"
+          cut=1
+          current="$(git rev-parse --verify --quiet "refs/remotes/origin/${branch}" || true)"
+          if [[ -z "${current}" ]]; then
+            git push origin "${parent}:refs/heads/${branch}"
+            echo "::notice::Created ${branch} at ${parent}."
+            result="created at \`${parent}\`"
+          elif [[ "${current}" == "${parent}" ]]; then
+            echo "::notice::${branch} is already at ${parent}."
+            result="already at \`${parent}\`"
+          elif git merge-base --is-ancestor "${current}" "${parent}"; then
+            git push origin "${parent}:refs/heads/${branch}"
+            echo "::notice::Fast-forwarded ${branch} ${current} -> ${parent}."
+            result="fast-forwarded \`${current}\` -> \`${parent}\`"
+          else
+            echo "::error::${branch} (${current}) is not an ancestor of ${parent}; cannot fast-forward. Reconcile the branch manually."
+            exit 1
+          fi
+          echo "- \`${branch}\` (VERSION ${old} -> ${new} in \`${commit}\`): ${result}" >> "${GITHUB_STEP_SUMMARY}"
+        done
+
+        if [[ "${cut}" -eq 0 ]]; then
+          echo "::notice::No VERSION bump on main's first-parent chain in this push."
+        fi
